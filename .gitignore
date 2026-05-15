@@ -9,6 +9,7 @@
 # Raw source data
 data/
 hackathon_data/raw_data/
+hackathon_data/reference_data/parcels/
 
 # Generated binary docs
 *.docx
