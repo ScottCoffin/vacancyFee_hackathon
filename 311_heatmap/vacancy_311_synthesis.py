@@ -58,7 +58,8 @@ PARCELS_GPKG = HACK_DIR / "parcels_simplified.gpkg"
 VACANT_CSV = HACK_DIR / "vacant_parcels.csv"
 COUNCIL_SHP_DIR = DATA_DIR / "council_districts"
 
-OUT_DIR = SCRIPT_DIR
+OUT_DIR = SCRIPT_DIR              # findings.json (machine-readable sidecar)
+FIG_DIR = SCRIPT_DIR / "figures"  # all PNG figures land here
 
 # ── Analysis parameters ──────────────────────────────────────────────────────
 
@@ -254,13 +255,18 @@ def load_parcels_with_vacancy(gpd):
 
 
 def _normalize_apn(series):
-    """Coerce APN values to a comparable zero-stripped string key.
+    """Coerce APN values to a comparable zero-padded string key.
 
-    The GeoPackage stores APNs as strings, the CSV often as int64; floats may
-    sneak in. Strip any trailing ``.0`` and surrounding whitespace.
+    The GeoPackage stores APNs as 14-digit zero-padded strings
+    (e.g. ``00100110010000``); the CSV often stores them as int64, which drops
+    any leading zeros (``100110010000``). Floats may also sneak in. Strip any
+    trailing ``.0`` and whitespace, then left-pad back to 14 digits so both
+    representations compare equal. Without the pad, every vacant parcel whose
+    APN begins with a zero silently fails to match (~45% of the vacant set).
     """
     s = series.astype(str).str.strip()
     s = s.str.replace(r"\.0$", "", regex=True)
+    s = s.str.zfill(14)
     return s
 
 
@@ -316,7 +322,7 @@ def _titled(ax, title, subtitle=None, ha="center"):
 
 
 def _save(fig, name):
-    path = OUT_DIR / name
+    path = FIG_DIR / name
     fig.savefig(path)
     plt.close(fig)
     log.info("Saved %s", name)
@@ -416,18 +422,30 @@ def fig_blight_signature(joined, F):
     F.add("top_vacant_call_category_count", int(top.iloc[-1]))
 
     fig, ax = plt.subplots(figsize=(11, 8))
-    colors = [C_VACANT if c in DIRECT_VACANCY_CATS else C_GOLD for c in top.index]
+    fam = [_family(c) for c in top.index]
+    colors = [color for _label, color in fam]
     bars = ax.barh(range(len(top)), top.values, color=colors, edgecolor="white")
     ax.set_yticks(range(len(top)))
     ax.set_yticklabels([_short(c) for c in top.index], fontsize=9)
     ax.xaxis.set_major_formatter(THOUSANDS_FMT)
     ax.set_xlabel("311 calls on vacant parcels")
     _titled(ax, "The blight signature of vacant land",
-            "What people actually report on vacant parcels  "
-            "(red = directly names abandonment/vacancy)", ha="left")
+            "What residents actually report on vacant parcels, "
+            "by complaint type", ha="left")
     for i, v in enumerate(top.values):
         ax.text(v + top.max() * 0.01, i, f"{int(v):,}", va="center", fontsize=8,
                 color="#555555")
+    # Build a legend from the families that actually appear, in _FAMILIES order.
+    import matplotlib.patches as mpatches
+    seen, handles = set(), []
+    for _pre, label, color in _FAMILIES:
+        if label in {l for l, _c in fam} and label not in seen:
+            seen.add(label)
+            handles.append(mpatches.Patch(color=color, label=label))
+    if any(l == "Other" for l, _c in fam):
+        handles.append(mpatches.Patch(color=C_OCCUPIED, label="Other"))
+    ax.legend(handles=handles, loc="lower right", frameon=False, fontsize=9,
+              title="Complaint family")
     ax.grid(axis="y", visible=False)
     _footer(fig)
     _save(fig, "fig3_blight_signature.png")
@@ -450,18 +468,21 @@ def fig_distance_decay(dist_to_vacant, F):
     within_300 = float(100 * (d <= 300).mean())
     F.add("pct_blight_calls_within_300ft_of_vacant", round(within_300, 1))
 
-    fig, ax = plt.subplots(figsize=(10, 5.5))
+    fig, ax = plt.subplots(figsize=(10, 5.8))
     bars = ax.bar(range(len(pct)), pct, color=C_VACANT, edgecolor="white", width=0.7)
     ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels(labels, rotation=20, ha="right")
+    # Horizontal labels (they're short) so they don't collide with the axis
+    # label or the footer; a touch smaller to fit seven bands.
+    ax.set_xticklabels(labels, rotation=0, fontsize=9)
     ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:.0f}%"))
     ax.set_ylabel("Share of blight 311 calls")
-    ax.set_xlabel("Distance to nearest vacant parcel")
+    ax.set_xlabel("Distance to nearest vacant parcel", labelpad=10)
     _bar_labels(ax, bars, fmt="{:.0f}%", dy=pct.max() * 0.01, fontsize=9)
     _titled(ax, "Blight clusters at the edge of vacant land",
             f"{within_300:.0f}% of all blight 311 calls fall within 300 ft of a "
             f"vacant parcel", ha="left")
     ax.grid(axis="x", visible=False)
+    fig.subplots_adjust(bottom=0.18)
     _footer(fig)
     _save(fig, "fig4_distance_decay.png")
 
@@ -545,18 +566,31 @@ def fig_hotspot_map(parcels, joined, F):
     ys = matched.geometry.y.to_numpy()
 
     fig, ax = plt.subplots(figsize=(11, 11))
-    hb = ax.hexbin(xs, ys, gridsize=80, cmap="inferno", mincnt=1, bins="log")
+
+    # Vacant parcels first, as a bright underlay, so the hot spots read on top of
+    # the land they sit on. Larger + more opaque than before so the overlay is
+    # actually visible against the dark end of the colormap.
+    vac = parcels[parcels["is_vacant"]]
+    vac_pts = vac.geometry.representative_point()
+    ax.scatter(vac_pts.x, vac_pts.y, s=6, color="#4CC9F0", alpha=0.45,
+               linewidths=0, label="Vacant parcel", zorder=1)
+
+    hb = ax.hexbin(xs, ys, gridsize=80, cmap="inferno", mincnt=1, bins="log",
+                   alpha=0.92, zorder=2)
     cb = fig.colorbar(hb, ax=ax, shrink=0.6, pad=0.01)
     cb.set_label("Blight 311 calls (log scale)")
 
-    vac = parcels[parcels["is_vacant"]]
-    vac_pts = vac.geometry.representative_point()
-    ax.scatter(vac_pts.x, vac_pts.y, s=2, color="#4CC9F0", alpha=0.25,
-               linewidths=0, label="Vacant parcel")
+    # Zoom to the dense core (1st–99th percentile of call locations) so sparse
+    # rural outliers don't shrink the county into a sea of whitespace.
+    x1, x99 = np.percentile(xs, [1, 99])
+    y1, y99 = np.percentile(ys, [1, 99])
+    padx, pady = (x99 - x1) * 0.03, (y99 - y1) * 0.03
+    ax.set_xlim(x1 - padx, x99 + padx)
+    ax.set_ylim(y1 - pady, y99 + pady)
     ax.set_aspect("equal")
     ax.set_axis_off()
-    ax.set_title("Blight hot spots & vacant land, Sacramento County")
-    ax.legend(loc="upper right", frameon=True, markerscale=4, fontsize=9)
+    ax.set_title("Blight hot spots & vacant land, Sacramento County", fontsize=17)
+    ax.legend(loc="upper right", frameon=True, markerscale=4, fontsize=10)
     fig.patch.set_facecolor("white")
     _footer(fig)
     _save(fig, "fig7_hotspot_map.png")
@@ -583,7 +617,28 @@ def fig_temporal_trend(joined, F):
             label="12-month average")
     ax.set_ylabel("Blight 311 calls on vacant parcels / month")
     ax.set_title("The problem isn't going away")
-    ax.legend(frameon=False, loc="upper left")
+
+    # HONESTY CAVEAT: the SalesForce311 export is sparse before 2023 (the county
+    # migrated reporting systems then), so the near-zero pre-2023 values reflect
+    # data coverage, not less blight. Shade and label that window so the ramp is
+    # never mistaken for real growth.
+    cutoff = pd.Timestamp("2023-01-01")
+    # DateCreated carries a UTC 'Z', so the resampled index is tz-aware; match it
+    # to avoid a tz-naive/aware comparison error.
+    if getattr(monthly.index, "tz", None) is not None:
+        cutoff = cutoff.tz_localize(monthly.index.tz)
+    if monthly.index.min() < cutoff:
+        ax.axvspan(monthly.index.min(), cutoff, color="#CED4DA", alpha=0.30,
+                   zorder=0)
+        ax.axvline(cutoff, color="#888888", linestyle=":", linewidth=1.2)
+        ymax = max(monthly.max(), 1)
+        ax.text(monthly.index.min(), ymax * 0.96,
+                "  Partial 311 coverage before 2023\n"
+                "  (reporting-system migration) —\n"
+                "  not lower blight",
+                fontsize=8.5, color="#777777", va="top", ha="left", style="italic")
+
+    ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(0.18, 1.0))
     ax.margins(x=0.01)
     F.add("temporal_months_covered", int(len(monthly)))
     _footer(fig)
@@ -591,30 +646,46 @@ def fig_temporal_trend(joined, F):
 
 
 def fig_cost_vs_fee(F):
-    """The flat $70 fee vs the estimated annual cost of the calls it generates."""
-    rate = F.values.get("calls_per_vacant_parcel")
-    if not rate:
-        return
-    # Calls-per-parcel is measured over the whole data window; annualize so the
-    # comparison against a per-year fee is apples-to-apples.
-    years = F.values.get("data_years") or 1.0
-    annual_rate = rate / years
-    est_cost = annual_rate * COST_PER_CALL_USD
-    F.add("calls_per_vacant_parcel_per_year", round(annual_rate, 3))
-    F.add("est_annual_blight_cost_per_vacant_parcel", round(est_cost, 2))
-    F.add("cost_to_fee_ratio", round(est_cost / FLAT_VACANCY_FEE_USD, 2))
+    """The annual public burden of the blight calls that vacant land draws.
 
-    fig, ax = plt.subplots(figsize=(8, 6))
-    bars = ax.bar(["What the owner\npays (flat fee)",
-                   "Est. public cost of\nblight calls it draws"],
-                  [FLAT_VACANCY_FEE_USD, est_cost],
-                  color=[C_GREEN, C_VACANT], width=0.6, edgecolor="white")
-    _bar_labels(ax, bars, fmt="${:,.0f}", dy=est_cost * 0.01)
+    Reframed (deliberately) away from a flat-fee-vs-cost comparison: at any
+    defensible per-call cost the $70 fee actually *exceeds* the narrow 311
+    response cost, so that framing undercut the argument. The honest, stronger
+    story is the *scale of the recurring externality* — what the public spends
+    every year answering blight calls on vacant land, and how much of that is the
+    excess attributable to vacancy (the 3x multiplier expressed in dollars).
+    """
+    calls_vacant = F.values.get("blight_calls_on_vacant")
+    years = F.values.get("data_years") or 1.0
+    if not calls_vacant:
+        return
+    annual_calls = calls_vacant / years
+    total_cost = annual_calls * COST_PER_CALL_USD
+
+    # Excess attributable to vacancy: calls above the occupied-parcel baseline
+    # rate, i.e. the share that wouldn't exist if vacant land behaved like the
+    # rest of the parcel base. This is the "cost of the vacancy externality."
+    rate_v = F.values.get("calls_per_vacant_parcel", 0) / years
+    rate_o = F.values.get("calls_per_occupied_parcel", 0) / years
+    n_vacant = F.values.get("n_vacant_parcels", 0)
+    excess_cost = max(rate_v - rate_o, 0) * n_vacant * COST_PER_CALL_USD
+
+    F.add("annual_blight_calls_on_vacant", round(annual_calls))
+    F.add("annual_public_cost_vacant_blight_usd", round(total_cost))
+    F.add("annual_excess_cost_attributable_to_vacancy_usd", round(excess_cost))
+
+    fig, ax = plt.subplots(figsize=(9, 6))
+    labels = ["Every blight 311 call\non vacant parcels",
+              "The excess vs. if vacant land\nbehaved like occupied land"]
+    bars = ax.bar(labels, [total_cost, excess_cost],
+                  color=[C_VACANT, C_ACCENT], width=0.6, edgecolor="white")
+    _bar_labels(ax, bars, fmt="${:,.0f}", dy=total_cost * 0.01)
     ax.yaxis.set_major_formatter(DOLLAR_FMT)
-    ax.set_ylabel("Per vacant parcel, per year")
-    _titled(ax, "The fee doesn't cover the cost",
+    ax.set_ylabel("Public cost per year (county-wide)")
+    _titled(ax, "What vacant land costs the public every year",
             f"Illustrative at ${COST_PER_CALL_USD:,.0f}/call · "
-            f"{annual_rate:.2f} blight calls per vacant parcel per year")
+            f"~{annual_calls:,.0f} blight 311 calls a year on vacant parcels · "
+            f"before cleanup, abatement, or lost tax base")
     ax.margins(y=0.18)
     _footer(fig)
     _save(fig, "fig9_cost_vs_fee.png")
@@ -622,12 +693,46 @@ def fig_cost_vs_fee(F):
 
 # ── Small utilities ──────────────────────────────────────────────────────────
 
+# Family grouping for the blight-signature chart: a readable label + a color per
+# top-level complaint family. Used to colour the bars AND build a real legend, so
+# the chart no longer references a "red" highlight that never appears.
+_FAMILIES = [
+    ("Homeless Camp - Primary", "Homeless camp (priority)", C_VACANT),
+    ("Homeless Camp", "Homeless camp", C_VACANT),
+    ("Code Enforcement", "Code enforcement", C_ACCENT),
+    ("Solid Waste", "Illegal dumping / waste", C_GOLD),
+    ("Animal Control", "Abandoned animals", C_GREEN),
+]
+
+
+def _family(cat: str):
+    """Return (family label, color) for a CategoryName."""
+    for pre, label, color in _FAMILIES:
+        if cat.startswith(pre):
+            return label, color
+    return "Other", C_OCCUPIED
+
+
 def _short(cat: str) -> str:
-    return (cat.replace("Code Enforcement ", "CE: ")
-               .replace("Solid Waste ", "SW: ")
-               .replace("Animal Control ", "AC: ")
-               .replace("Homeless Camp - Primary", "HC-Primary")
-               .replace("Homeless Camp", "HC"))
+    """Human-readable label for a 311 CategoryName (no cryptic HC/CE/SW codes)."""
+    fams = {
+        "Homeless Camp - Primary": "Homeless camp",
+        "Homeless Camp": "Homeless camp",
+        "Code Enforcement": "Code enf.",
+        "Solid Waste": "Dumping",
+        "Animal Control": "Animal",
+    }
+    for pre, short in fams.items():
+        if cat.startswith(pre):
+            rest = cat[len(pre):].strip()
+            rest = (rest.replace("HC-Trash SPD", "trash")
+                        .replace("HC-Trash", "trash")
+                        .replace("HC-Primary", "priority report")
+                        .replace("Homeless Encampment Blocking Sidewalk",
+                                 "encampment on sidewalk")
+                        .strip())
+            return f"{short} — {rest}" if rest else short
+    return cat
 
 
 def _load_council(gpd):
@@ -677,6 +782,7 @@ def main(argv=None):
         sys.exit("ERROR: geopandas is required. pip install geopandas")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    FIG_DIR.mkdir(parents=True, exist_ok=True)
     F = Findings()
 
     calls = load_blight_calls(gpd)
@@ -701,7 +807,8 @@ def main(argv=None):
     fig_cost_vs_fee(F)                             # 9. the policy punchline
 
     F.save(OUT_DIR / "findings.json")
-    log.info("\nDone. Figures + findings.json written to %s/", OUT_DIR.name)
+    log.info("\nDone. Figures -> %s/figures/, findings.json -> %s/",
+             OUT_DIR.name, OUT_DIR.name)
     log.info("Headline: vacant parcels draw %.1fx the blight calls of occupied land.",
              F.values.get("vacant_blight_multiplier", float("nan")))
 

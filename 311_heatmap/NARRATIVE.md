@@ -115,5 +115,5 @@ python 311_heatmap/vacancy_311_synthesis.py --snap-ft 250 --cost-per-call 175
 If the data files aren't present the script exits immediately and tells you
 exactly which file to download and where to put it — it never half-runs.
 
-Outputs land next to the script: `fig1_*.png` … `fig9_*.png` and
-`findings.json`.
+Outputs: the nine figures land in `311_heatmap/figures/` (`fig1_*.png` …
+`fig9_*.png`); the machine-readable `findings.json` sits at `311_heatmap/`.
