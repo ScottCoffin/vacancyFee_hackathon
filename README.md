@@ -4,10 +4,18 @@ Supporting data, analysis, and reporting for [vacancyfee.org](https://vacancyfee
 
 ## Objectives
 
-1. **Identify vacant/underused parcels** in Sacramento County from assessor land-use codes, improvement values, and known vacant-use types (parking lots, abandoned service stations).
-2. **Correlate vacancy with 311 service calls** (code enforcement, blight, homeless encampments) to show that unmanaged vacancy generates cascading costs to the city, not just to the parcel owner.
-3. **Quantify the revenue case** for a graduated vacancy fee (Sacramento currently charges a flat $70/year regardless of parcel value) versus tiered fee structures used by comparable cities.
-4. **Produce public-facing artifacts** — maps, charts, and a written report — usable in public comment, committee testimony, and social media, and low enough on the skill floor that hackathon volunteers (many first-time GIS/data users) could build on it in a single afternoon.
+1. -**DONE**- **Identify vacant/underused parcels** in Sacramento County from assessor land-use codes, improvement values, and known vacant-use types (parking lots, abandoned service stations). 
+2. -**DONE**- **Correlate vacancy with 311 service calls** (code enforcement, blight, homeless encampments) to show that unmanaged vacancy generates cascading costs to the city, not just to the parcel owner.
+
+
+## To-do
+1. **Gain access to VacancyFee.org** - give Jeff our public termianl IDs to gain access to the LightSail server and SSH into IP 
+2. **In-Progress**-**Quantify the revenue case** for a graduated vacancy fee (Sacramento currently charges a flat $70/year regardless of parcel value) versus tiered fee structures used by comparable cities.
+4. **Assessed rate vs. market value rate** - 
+5. **Estimate revenue for occupied spaces** - what percentage of rent is revenue? Parcel size as a predictor for revenue. Estimate loss tax revenue for businesses for unoccupied spaces. Aggregate by census block, street (midtown), district, named neighborhoods. Make interactive map.
+6. **Build Story Map** - make a leaflet
+7. **Produce public-facing artifacts** — maps, charts, and a written report — usable in public comment, committee testimony, and social media, and low enough on the skill floor that hackathon volunteers (many first-time GIS/data users) could build on it in a single afternoon.
+
 
 ## Workflow
 

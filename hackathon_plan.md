@@ -87,6 +87,10 @@ Build a data exploration notebook with interactive maps, filters, charts, and fe
 
 **Start here:** Open `starter_notebook.ipynb` — it pre-loads the data with maps, fee calculations, and ownership analysis ready to extend.
 
+### 6. Interactive Market value vs. Appraisal cost delta map
+Build an interactive map showing each property's real-time market value vs. it's appraisal cost. Jeff's analyses on a summary-level has shown that commercial property's have much greater deltas than residential.
+
+
 ---
 
 ## Data Files
